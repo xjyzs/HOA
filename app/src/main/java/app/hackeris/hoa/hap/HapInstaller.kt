@@ -1,6 +1,7 @@
 package app.hackeris.hoa.hap
 
 import android.content.Context
+import org.json.JSONObject
 import java.io.File
 import java.io.InputStream
 
@@ -14,7 +15,9 @@ data class InstalledHap(
 
 class HapInstaller(private val context: Context) {
 
-    private val baseDir = File(context.filesDir, "haps")
+    // Install to filesDir/arkui-x/ so the ArkUI-X runtime's
+    // StageAssetProvider.GetAppDataModuleDir() can discover them.
+    private val baseDir = File(context.filesDir, "arkui-x")
 
     fun install(hapPath: String): InstalledHap {
         val bundle = HapBundleLoader().parse(hapPath)
@@ -34,7 +37,9 @@ class HapInstaller(private val context: Context) {
     private fun installFromBundle(bundle: HapBundle): InstalledHap {
         val bundleName = bundle.moduleConfig.bundleName.ifBlank { "unknown" }
         val moduleName = bundle.moduleConfig.name
-        val targetDir = File(baseDir, "$bundleName/$moduleName")
+        // Runtime expects dot-separated: bundleName.moduleName
+        val fullModuleName = "$bundleName.$moduleName"
+        val targetDir = File(baseDir, fullModuleName)
 
         if (targetDir.exists()) {
             targetDir.deleteRecursively()
@@ -70,6 +75,9 @@ class HapInstaller(private val context: Context) {
             file.writeBytes(data)
         }
 
+        // Write pkgContextInfo.json (required by StageAssetProvider.GetPkgJsonBuffer)
+        writePkgContextInfo(targetDir, fullModuleName, bundle.moduleConfig.type)
+
         val mainAbility = bundle.moduleConfig.mainElement.ifBlank {
             bundle.moduleConfig.abilities.firstOrNull()?.name ?: ""
         }
@@ -83,43 +91,57 @@ class HapInstaller(private val context: Context) {
         )
     }
 
+    private fun writePkgContextInfo(targetDir: File, fullModuleName: String, moduleType: String) {
+        val json = JSONObject().apply {
+            put("moduleName", fullModuleName)
+            put("moduleType", moduleType)
+            put("isEsModule", true)
+        }
+        File(targetDir, "pkgContextInfo.json").writeText(json.toString())
+    }
+
     fun getInstalledHaps(): List<InstalledHap> {
         if (!baseDir.exists()) return emptyList()
 
         return baseDir.listFiles()
             ?.filter { it.isDirectory }
-            ?.flatMap { bundleDir ->
-                bundleDir.listFiles()
-                    ?.filter { it.isDirectory }
-                    ?.mapNotNull { moduleDir ->
-                        val moduleJson = File(moduleDir, "module.json")
-                        if (!moduleJson.exists()) return@mapNotNull null
+            ?.mapNotNull { moduleDir ->
+                // Directory name format: bundleName.moduleName
+                val dirName = moduleDir.name
+                val dotIndex = dirName.indexOf('.')
+                if (dotIndex < 0) return@mapNotNull null
 
-                        val config = try {
-                            HapBundleLoader().parseModuleJson(moduleJson.readText())
-                        } catch (_: Exception) {
-                            return@mapNotNull null
-                        }
+                val bundleName = dirName.substring(0, dotIndex)
+                val moduleName = dirName.substring(dotIndex + 1)
 
-                        val mainAbility = config.mainElement.ifBlank {
-                            config.abilities.firstOrNull()?.name ?: ""
-                        }
+                val moduleJson = File(moduleDir, "module.json")
+                if (!moduleJson.exists()) return@mapNotNull null
 
-                        InstalledHap(
-                            bundleName = bundleDir.name,
-                            moduleName = moduleDir.name,
-                            contentDir = moduleDir,
-                            moduleConfig = config,
-                            mainAbility = mainAbility
-                        )
-                    } ?: emptyList()
+                val config = try {
+                    HapBundleLoader().parseModuleJson(moduleJson.readText())
+                } catch (_: Exception) {
+                    return@mapNotNull null
+                }
+
+                val mainAbility = config.mainElement.ifBlank {
+                    config.abilities.firstOrNull()?.name ?: ""
+                }
+
+                InstalledHap(
+                    bundleName = bundleName,
+                    moduleName = moduleName,
+                    contentDir = moduleDir,
+                    moduleConfig = config,
+                    mainAbility = mainAbility
+                )
             } ?: emptyList()
     }
 
     fun uninstall(bundleName: String) {
-        val dir = File(baseDir, bundleName)
-        if (dir.exists()) {
-            dir.deleteRecursively()
-        }
+        // Remove all modules matching this bundleName
+        if (!baseDir.exists()) return
+        baseDir.listFiles()
+            ?.filter { it.isDirectory && it.name.startsWith("$bundleName.") }
+            ?.forEach { it.deleteRecursively() }
     }
 }

@@ -182,12 +182,15 @@ object Stage1Verifier {
     }
 
     private fun checkInstalledHaps(context: Context): CheckResult {
-        val hapsDir = File(context.filesDir, "haps")
-        val hasInstalled = hapsDir.exists() && hapsDir.listFiles()?.isNotEmpty() == true
+        val arkuiDir = File(context.filesDir, "arkui-x")
+        val modules = arkuiDir.listFiles()
+            ?.filter { it.isDirectory && it.name.contains(".") }
+            ?: emptyList()
+        val hasInstalled = modules.isNotEmpty()
         return CheckResult(
             name = "InstalledHaps",
             passed = true, // not a blocking check
-            detail = if (hasInstalled) "HAPs found in ${hapsDir.path}" else "No HAPs installed yet (use Install HAP button)"
+            detail = if (hasInstalled) "${modules.size} HAP(s) in ${arkuiDir.path}: ${modules.map { it.name }.joinToString()}" else "No HAPs installed yet (use Install HAP button)"
         )
     }
 
