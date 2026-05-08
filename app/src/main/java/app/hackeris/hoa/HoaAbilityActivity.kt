@@ -5,6 +5,7 @@ import android.util.Log
 import ohos.stage.ability.adapter.StageActivity
 
 class HoaAbilityActivity : StageActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         val bundleName = intent.getStringExtra("BUNDLE_NAME") ?: "com.example.enjoyarkuix"
         val moduleName = intent.getStringExtra("MODULE_NAME") ?: "entry"
@@ -14,6 +15,13 @@ class HoaAbilityActivity : StageActivity() {
         Log.i(TAG, "========== HoaAbilityActivity onCreate START ==========")
         Log.i(TAG, "bundleName=$bundleName, moduleName=$moduleName, abilityName=$abilityName")
         Log.i(TAG, "instanceName=$instanceName")
+
+        // Check if StageApplication init succeeded
+        val app = applicationContext as? HoaApplication
+        if (app != null && !app.initSuccess) {
+            Log.e(TAG, "StageApplication init FAILED — ArkUI rendering will not work")
+            Log.e(TAG, "  Error was: ${app.initError?.message}")
+        }
 
         try {
             setInstanceName(instanceName)
@@ -25,6 +33,7 @@ class HoaAbilityActivity : StageActivity() {
         try {
             super.onCreate(savedInstanceState)
             Log.i(TAG, "super.onCreate() completed — ArkUI rendering surface should be created")
+            Log.i(TAG, "instanceId=${getInstanceId()}, instanceName=${getInstanceName()}")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "FATAL: Native library link error during Activity onCreate", e)
         } catch (e: Exception) {
@@ -47,6 +56,11 @@ class HoaAbilityActivity : StageActivity() {
     override fun onDestroy() {
         Log.i(TAG, "onDestroy — UIAbility.onDestroy() should fire")
         super.onDestroy()
+    }
+
+    override fun onBackPressed() {
+        Log.i(TAG, "onBackPressed")
+        super.onBackPressed()
     }
 
     companion object {
