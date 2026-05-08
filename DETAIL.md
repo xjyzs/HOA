@@ -4,13 +4,61 @@
 
 ## 总览
 
-MVP 分为 6 个阶段，每个阶段都有明确的验证标准（可独立验证），后续阶段依赖前序阶段的产出。
+MVP 分为 7 个阶段，每个阶段都有明确的验证标准（可独立验证），后续阶段依赖前序阶段的产出。
 
 ```
-Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 ──→ Stage 5
-构建环境      运行时壳    复现        HAP解析      动态加载     资源系统
-              初始化      ArkUI-X     module.json  从HAP加载    $r()解析
+Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 ──→ Stage 5 ──→ Stage 6
+构建环境      Ark VM      复现        HAP解析      动态加载     资源系统     生命周期
+              初始化       ArkUI-X     module.json  从HAP加载    $r()解析    +路由
+              +.abc验证
 ```
+
+## 关键前置发现
+
+### 字节码格式差异：ArkUI-X vs OpenHarmony
+
+**结论：两者 .abc 格式同源但版本已分叉，存在兼容性风险。**
+
+| 维度 | ArkUI-X | OpenHarmony |
+|------|---------|-------------|
+| magic header | `PANDA\0\0\0` | `PANDA\0\0\0` |
+| 当前版本 | **13.0.0.0** | **12.0.6.0** |
+| 基础结构 | 相同（ClassIndex, LiteralArrayIndex, IndexSection） | 相同 |
+| NAPI 模块机制 | napi_module_register (兼容) | napi_module_register (兼容) |
+| 入口类 | `arkui.ArkUIEntry.Application` (ANI) | `__EntryWrapper_{abilityName}` (NAPI) |
+
+**兼容性影响**：
+- ✅ 低版本 .abc（≤12.0.6.0）在两个运行时上都能执行
+- ❌ 高版本 .abc（≥13.0.0.0）仅 ArkUI-X 运行时支持
+- ⚠️ HarmonyOS SDK 编译的 HAP 可能使用高于 ArkUI-X 的字节码版本，导致加载失败
+
+**应对策略**：
+1. MVP 优先使用 ArkUI-X 编译的 .abc（保证版本匹配）
+2. 后续需支持多版本字节码：维护与 OpenHarmony 对齐的独立运行时（参考 `/data/share/TECHNICAL_PLAN.md` 的 Phase 1-2f 路线）
+3. 版本检查逻辑：`panda_file::File::CheckFileVersion()` 会在加载时校验版本，失败时给出明确错误
+
+### 与 `/data/share` 方案的对齐
+
+`/data/share/TECHNICAL_PLAN.md` 和 `TECHNICAL_DETAIL.md` 提供了一个并行方案（"HongEngine"），它已完成了以下关键工作：
+
+| 已完成工作 | 产出 | 可借鉴性 |
+|-----------|------|---------|
+| Ark Runtime 交叉编译到 Android arm64 | `libarkruntime.so` (200MB), 11 个 .so | **高** — 如果 ArkUI-X 构建失败，可复用其 CMake 交叉编译脚本 |
+| ETS VM 端到端验证 | `hello.abc → exit_code=42` (QEMU ARM64) | **高** — 验证了 VM 在 Android 上的可行性 |
+| OhmUrl 模块解析规则 | 7 种前缀（`@ohos:` 为拦截目标） | **高** — NAPI 拦截层的精确拦截点 |
+| ace_engine 调研 | 发现无 `adapter/android/`，需从 `adapter/preview/` 移植 | **高** — 如果复用 ArkUI-X 预编译产物受阻，需参考此路线自建 |
+
+**两个方案的核心分歧**：
+
+| 维度 | 本方案 (HOA) | HongEngine 方案 |
+|------|-------------|----------------|
+| 运行时来源 | 复用 ArkUI-X 预编译产物 | 从 OHOS 源码自建交叉编译 |
+| ACE 引擎 | 直接使用 `libarkui_android.so` | 需创建 `adapter/android/`，从 `adapter/preview/` 移植 |
+| 构建系统 | GN/Ninja（ArkUI-X 原生） | CMake（自建） |
+| 风险 | 字节码版本兼容性 | ACE 引擎 Android 适配工作量巨大 |
+| 优势 | 快速启动，已有 Android 适配 | 完全控制运行时，可对齐 OHOS 最新字节码版本 |
+
+**推荐策略**：先走本方案（复用 ArkUI-X），如果遇到字节码版本不可逾越的兼容性问题，再切换到 HongEngine 路线（自建运行时）。
 
 ---
 
@@ -85,9 +133,207 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 1: Android 应用壳与 ArkUI-X 运行时初始化
+## Stage 1: Ark VM 初始化与 .abc 字节码验证
 
-**目标**：创建 Android 应用项目，集成 ArkUI-X 运行时，成功初始化 Ark VM 和 ArkUI 渲染引擎，在屏幕上显示空白渲染表面。
+**目标**：在 Android 上创建 Ark VM 实例，加载并执行一个最小 .abc 字节码，验证端到端的字节码执行能力。
+
+**预计耗时**：1 周
+
+> 这是 .abc 运行时相关的**第一个验证点**——证明 Ark VM 可以在 Android 进程中创建、加载 .abc 并执行字节码。
+
+### 为什么需要此阶段
+
+后续所有阶段都依赖 Ark VM 能正确执行 .abc 字节码。在集成到完整的 ArkUI 渲染引擎之前，先用最小的 .abc 程序独立验证 VM 执行能力，可以：
+1. 隔离 VM 问题与 UI 渲染问题
+2. 确认字节码版本兼容性
+3. 验证 NAPI 模块注册机制
+4. 建立调试基础设施
+
+### 实现路径
+
+1. **选择运行时来源**
+
+   两条路线，优先级排序：
+
+   **路线 A（优先）：复用 ArkUI-X 的 `libarkui_android.so`**
+   - 该 .so 已包含 Ark VM（`libarkruntime` 被静态链接到其中）
+   - 可通过 JNI 调用 `JSNApi::CreateEcmaVM()` 等接口
+   - 优势：无需额外编译，与后续阶段无缝衔接
+   - 劣势：.so 体积大（~200MB），VM API 可能未全部导出
+
+   **路线 B（备选）：使用 HongEngine 的 `libarkruntime.so`**
+   - 来自 `/data/share/TECHNICAL_PLAN.md` 的 Phase 2f 产出
+   - 已验证 `hello.abc → exit_code=42`（QEMU ARM64）
+   - C API 已封装：`hongengine_c_api.h`
+   - 优势：独立 VM，API 明确，已验证
+   - 劣势：需额外集成工作，后续需替换为 ArkUI-X 运行时
+
+2. **准备测试用 .abc 字节码**
+
+   方案 A：使用 Panda Assembler 手写最小 .abc
+   ```
+   // hello.pa (PandaAssembly 文本格式)
+   .record Hello {
+   }
+   .function i32 Hello.main() {
+       ldai 42        // 加载立即数 42
+       return         // 返回
+   }
+   ```
+   用 `ark_disasm` / `pandasm` 编译为 .abc：
+   ```bash
+   # 在 /src/ohos/arkcompiler/ 或 /src/arkui-x/arkcompiler/ 中
+   # 编译 host 版本的 assembler 工具
+   ./build.sh --product-name arkui-x --target-os ohos --build-target ark_assembler
+   # 编译 .pa → .abc
+   out/arkui-x/clang_x64/ark_assembler hello.pa -o hello.abc
+   ```
+
+   方案 B：使用 etsstdlib.abc + ETS 测试脚本
+   ```bash
+   # HongEngine 方案已有的测试产物
+   # etsstdlib.abc (1.3MB, 1731 类) + hello.abc
+   ```
+
+   方案 C：用 ArkUI-X 的 es2panda 编译最小 ArkTS
+   ```typescript
+   // minimal.ets
+   let x: number = 42;
+   console.log("Hello from Ark VM: " + x);
+   ```
+   ```bash
+   es2abc minimal.ets -o minimal.abc
+   ```
+
+3. **编写 VM 初始化与执行验证代码**
+
+   如果走路线 A（ArkUI-X 运行时），在 Android JNI 层：
+   ```cpp
+   // vm_test_jni.cpp
+   #include <jni.h>
+   #include <android/log.h>
+
+   // ArkUI-X libarkui_android.so 导出的 VM 接口
+   // （需用 nm -D 确认实际导出的符号名）
+   extern "C" {
+       // 这些符号可能需要通过 dlsym 动态查找
+       void* CreateEcmaVM(/* options */);
+       void  DestroyEcmaVM(void* vm);
+       int   ExecuteEcmaVM(void* vm, const char* abcPath, const char* entryPoint);
+   }
+
+   extern "C" JNIEXPORT jint JNICALL
+   Java_app_hoa_VmTestActivity_nativeTestAbc(
+       JNIEnv* env, jobject thiz, jstring abcPath, jstring entryPoint)
+   {
+       const char* path = env->GetStringUTFChars(abcPath, nullptr);
+       const char* entry = env->GetStringUTFChars(entryPoint, nullptr);
+
+       // Step 1: 创建 VM
+       __android_log_print(ANDROID_LOG_INFO, "HOA_VM", "Creating EcmaVM...");
+       void* vm = CreateEcmaVM();
+       if (!vm) {
+           __android_log_print(ANDROID_LOG_ERROR, "HOA_VM", "FAILED to create VM");
+           return -1;
+       }
+       __android_log_print(ANDROID_LOG_INFO, "HOA_VM", "VM created successfully");
+
+       // Step 2: 加载并执行 .abc
+       __android_log_print(ANDROID_LOG_INFO, "HOA_VM", "Loading .abc: %s", path);
+       int result = ExecuteEcmaVM(vm, path, entry);
+       __android_log_print(ANDROID_LOG_INFO, "HOA_VM", "Execution result: %d", result);
+
+       // Step 3: 销毁 VM
+       DestroyEcmaVM(vm);
+       __android_log_print(ANDROID_LOG_INFO, "HOA_VM", "VM destroyed");
+
+       env->ReleaseStringUTFChars(abcPath, path);
+       env->ReleaseStringUTFChars(entryPoint, entry);
+       return result;
+   }
+   ```
+
+   如果走路线 B（HongEngine 运行时），可直接使用其封装的 C API：
+   ```cpp
+   #include "hongengine_c_api.h"
+
+   // hongengine_vm_create() / hongengine_vm_execute() / hongengine_vm_destroy()
+   ```
+
+4. **检查 .abc 文件版本兼容性**
+
+   加载 .abc 时，Ark VM 会检查版本号。版本不匹配会导致加载失败。关键日志：
+   ```
+   // 成功
+   [HOA_VM] CheckFileVersion: file version [12, 0, 6, 0], runtime version [13, 0, 0, 0] — OK
+
+   // 失败
+   [HOA_VM] CheckFileVersion: file version [14, 0, 0, 0] is not supported — FAIL
+   ```
+
+   如果版本不兼容，需要：
+   - 确认 HAP 使用的 SDK 版本
+   - 使用对应版本的 Ark 运行时
+   - 或使用 `ark_disasm` 反编译 .abc 查看实际版本号
+
+5. **创建 VmTestActivity**
+
+   ```kotlin
+   class VmTestActivity : AppCompatActivity() {
+       override fun onCreate(savedInstanceState: Bundle?) {
+           super.onCreate(savedInstanceState)
+           setContentView(R.layout.activity_vm_test)
+
+           val abcPath = intent.getStringExtra("ABC_PATH") ?: return
+           val entryPoint = intent.getStringExtra("ENTRY_POINT") ?: "_GLOBAL::main"
+
+           val result = nativeTestAbc(abcPath, entryPoint)
+
+           // 显示结果
+           findViewById<TextView>(R.id.result_text).text =
+               if (result == 42) "✓ VM 执行成功 (exit_code=42)"
+               else "✗ VM 执行失败 (exit_code=$result)"
+       }
+
+       private external fun nativeTestAbc(abcPath: String, entryPoint: String): Int
+   }
+   ```
+
+### 验证标准
+
+- [ ] `nativeTestAbc()` 返回 42（或 .abc 中定义的预期返回值）
+- [ ] logcat 中看到 `EcmaVM created successfully`
+- [ ] logcat 中看到 `.abc loaded successfully`（无版本错误）
+- [ ] logcat 中看到 `Execution result: 42`
+- [ ] VM 创建和销毁过程无内存泄漏（`DestroyEcmaVM` 后无 asan 报错）
+- [ ] 对版本不兼容的 .abc 返回明确错误而非崩溃
+
+### 关键调试信息
+
+| logcat 标签 | 含义 | 排查方向 |
+|-------------|------|---------|
+| `HOA_VM: Creating EcmaVM...` | VM 创建开始 | 如果无后续日志 → .so 加载或符号解析失败 |
+| `HOA_VM: VM created` | VM 创建成功 | — |
+| `HOA_VM: Loading .abc` | 开始加载字节码 | — |
+| `CheckFileVersion: FAIL` | 字节码版本不兼容 | 检查 .abc 版本号，更换对应版本运行时 |
+| `Cannot find entry point` | 入口函数未找到 | 检查 entryPoint 字符串格式 |
+| `SIGSEGV/SIGABRT` | VM 执行崩溃 | 检查 .abc 是否损坏、入口函数签名是否正确 |
+
+### 与 HongEngine 已有成果的衔接
+
+HongEngine 已完成了以下可复用的验证：
+- `libarkruntime.so` (200MB) 交叉编译成功
+- `etsstdlib.abc` (1731 类) 加载成功
+- `hello.abc → exit_code=42` 在 QEMU ARM64 上通过
+- C API 封装：`hongengine_c_api.h`
+
+如果 Stage 0 的 ArkUI-X 构建成功，优先使用 ArkUI-X 运行时（因为包含完整的 ACE 引擎）。如果 ArkUI-X 构建失败，可临时使用 HongEngine 的 `libarkruntime.so` 完成 VM 验证。
+
+---
+
+## Stage 2: Android 应用壳与 ArkUI-X 运行时初始化
+
+**目标**：创建 Android 应用项目，集成 ArkUI-X 运行时，成功初始化 Ark VM + ArkUI 渲染引擎，在屏幕上显示空白渲染表面。
 
 **预计耗时**：1 周
 
@@ -120,11 +366,18 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
        }
    }
    ```
-   `StageApplication.onCreate()` 内部会：
+   `StageApplication.onCreate()` 内部会执行完整的运行时初始化链路：
    - 加载 `libarkui_android.so`
    - 创建应用沙箱目录（temp, files, cache, preferences）
-   - 初始化 Ark VM 和 ArkUI 引擎
-   - 注册 NAPI 模块
+   - 初始化 Ark VM（`JSNApi::CreateEcmaVM()` → `EcmaVM::Create()` → 分配 Heap/GC/ModuleManager）
+   - 初始化 ArkUI 引擎（AceContainer → PipelineContext → 5 线程 TaskExecutor）
+   - 注册 NAPI 模块（`NativeModuleManager::LoadNativeModule()`）
+
+   **.abc 运行时验证点**：logcat 中应看到以下关键日志（来自 ArkUI-X 内部）：
+   - `AppMain::LaunchApplication` — 原生应用启动
+   - `ParseBundleComplete` — Bundle 解析完成
+   - `CreateRuntime` / `JsRuntime::Initialize` — Ark VM 创建
+   - `EcmaVM::Create` — VM 实例创建
 
 4. **实现 MainActivity（空白渲染表面）**
    ```kotlin
@@ -167,9 +420,11 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 - [ ] 应用安装到 Android 设备/模拟器后能启动，不崩溃
 - [ ] logcat 中能看到 `StageApplication` 初始化日志（libarkui_android.so 加载成功）
-- [ ] logcat 中能看到 Ark VM 初始化日志
+- [ ] logcat 中能看到 Ark VM 初始化日志（`JsRuntime::Initialize` / `EcmaVM::Create`）
+- [ ] logcat 中能看到 ACE 引擎初始化日志（`AceContainer` / `PipelineContext`）
 - [ ] 屏幕上显示 SurfaceView（黑屏/空白渲染表面）
 - [ ] 无 unsatisfied link error、no such library 等错误
+- [ ] logcat 中无 `CheckFileVersion` 错误（确认 etsstdlib.abc 版本兼容）
 
 ### 调试要点
 
@@ -179,13 +434,14 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 2: 复现 ArkUI-X Example——加载预编译 .abc 显示 UI
+## Stage 3: 复现 ArkUI-X Example——加载预编译 .abc 显示 UI
 
 **目标**：将 ArkUI-X Example 项目的编译产物（.abc 字节码 + 资源）预打包进 APK，验证完整的 UI 渲染链路：.abc 加载 → Ark VM 执行 → ArkUI 组件树构建 → 渲染到 SurfaceView。
 
 **预计耗时**：1.5 周
 
 > 这是关键里程碑——此阶段成功即证明 ArkUI-X 运行时在我们的应用壳中可正常工作。
+> 这也是 .abc 字节码在完整 ArkUI 渲染管线中的**首次端到端验证**。
 
 ### 实现路径
 
@@ -243,11 +499,18 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
    }
    ```
 
-   `setInstanceName()` 的作用：告知 ArkUI-X 运行时要加载哪个模块的哪个 Ability。运行时会据此：
+   `setInstanceName()` 的作用：告知 ArkUI-X 运行时要加载哪个模块的哪个 Ability。运行时会据此执行完整的 .abc 加载链路：
    - 在 `assets/arkui-x/{moduleName}/` 下查找 .abc 和 module.json
-   - 通过 `ArktsDynamicFrontend` 加载 `modules.abc`
-   - 查找入口类 `__EntryWrapper_{abilityName}`
-   - 调用入口方法创建 Ability 实例
+   - `StageAssetProvider` 定位 `ets/modules.abc` 或 `ets/modules_static.abc`
+   - `panda_file::OpenPandaFile()` 解析 .abc 二进制格式
+   - `JSPandaFileManager::LoadFile()` 注册到 VM
+   - `ArktsFrontend::RunPage()` 查找入口类 `arkui.ArkUIEntry.Application`（ANI 接口）
+   - 调用 `createApplication()` → `start()` → `enter()` 启动应用
+
+   **注意入口类差异**：
+   - ArkUI-X 使用 ANI (ArkVM Native Interface) 入口：`arkui.ArkUIEntry.Application`
+   - OpenHarmony 原生使用 NAPI 入口：`__EntryWrapper_{abilityName}`
+   - 如果 HAP 的 .abc 是用 OpenHarmony SDK 编译的，入口类可能不匹配
 
 4. **处理 systemres**
 
@@ -280,7 +543,7 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 3: HAP 文件解析器
+## Stage 4: HAP 文件解析器
 
 **目标**：实现 HAP 文件格式解析，能够从 .hap 文件中提取 module.json、.abc 字节码、resources.index 和资源文件。纯工具模块，不依赖 Android 运行时。
 
@@ -422,7 +685,7 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 4: 动态 HAP 加载——从 HAP 文件加载 .abc 并执行
+## Stage 5: 动态 HAP 加载——从 HAP 文件加载 .abc 并执行
 
 **目标**：取代 Stage 2 中将 .abc 预打包进 assets 的方式，实现运行时从 HAP 文件动态加载 .abc 字节码并在 Ark VM 中执行。这是实现"Wine 式"直接运行 HAP 的核心突破。
 
@@ -573,7 +836,7 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 5: 资源系统适配
+## Stage 6: 资源系统适配
 
 **目标**：实现 HAP 资源的正确加载和解析，使 `$r()` 引用、`$rawfile()` 访问、多语言/暗色模式等资源特性在 Android 上工作。
 
@@ -693,7 +956,7 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 
 ---
 
-## Stage 6: 基本 Ability 生命周期与页面路由
+## Stage 7: 基本 Ability 生命周期与页面路由
 
 **目标**：实现 Ability 生命周期在 Android Activity 上的正确映射，以及 ArkUI 页面路由（router）功能，使多页面 HAP 应用可以正常导航。
 
@@ -838,19 +1101,20 @@ Stage 0 ──→ Stage 1 ──→ Stage 2 ──→ Stage 3 ──→ Stage 4 
 ```
 Stage 0 (构建环境)
     │
-    ├──→ Stage 1 (应用壳) ──→ Stage 2 (预编译 .abc)
-    │                              │
-    ├──→ Stage 3 (HAP 解析) ───────┼──→ Stage 4 (动态加载) ──→ Stage 5 (资源) ──→ Stage 6 (生命周期)
-    │                              │
-    │   (Stage 3 可与 Stage 1-2 并行开发)    (Stage 4 依赖 Stage 2+3)
+    ├──→ Stage 1 (Ark VM 初始化 + .abc 验证) ──→ Stage 2 (应用壳) ──→ Stage 3 (预编译 .abc)
+    │                                                   │                    │
+    ├──→ Stage 4 (HAP 解析) ────────────────────────────┼────────────────────┼──→ Stage 5 (动态加载) ──→ Stage 6 (资源) ──→ Stage 7 (生命周期)
+    │                                                   │                    │
+    │   (Stage 4 可与 Stage 1-3 并行开发)                 (Stage 5 依赖 Stage 3+4)
     │
-    └── Stage 3 纯 Kotlin/工具代码，不依赖 Android 运行时
+    └── Stage 4 纯 Kotlin/工具代码，不依赖 Android 运行时
 ```
 
 - **Stage 0** 是所有后续阶段的前置条件
-- **Stage 1-2** 与 **Stage 3** 可并行开发
-- **Stage 4** 必须等 Stage 2 和 Stage 3 都完成
-- **Stage 5-6** 顺序依赖 Stage 4
+- **Stage 1** 是 .abc 运行时的首个独立验证，必须在 Stage 2-3 之前完成
+- **Stage 2-3** 与 **Stage 4** 可并行开发
+- **Stage 5** 必须等 Stage 3 和 Stage 4 都完成
+- **Stage 6-7** 顺序依赖 Stage 5
 
 ## 附录 B: 测试 HAP 准备方案
 
@@ -858,10 +1122,11 @@ MVP 各阶段需要不同复杂度的测试 HAP：
 
 | 阶段 | 所需测试 HAP | 获取方式 |
 |------|-------------|---------|
-| Stage 2 | 简单 Hello World | ArkUI-X Example 编译 |
-| Stage 4 | 同上 | 同上（从 .hap 文件加载） |
-| Stage 5 | 含多语言、多密度、暗色模式资源 | 自行编译或获取开源 HAP |
-| Stage 6 | 多页面 + 多 Ability | 自行编译 |
+| Stage 1 | 最小 .abc (hello.abc, exit_code=42) | Panda Assembler 编译 / HongEngine 已有 |
+| Stage 3 | 简单 Hello World | ArkUI-X Example 编译 |
+| Stage 5 | 同上 | 同上（从 .hap 文件加载） |
+| Stage 6 | 含多语言、多密度、暗色模式资源 | 自行编译或获取开源 HAP |
+| Stage 7 | 多页面 + 多 Ability | 自行编译 |
 
 推荐在 Stage 0 完成后，立即准备所有测试 HAP，避免后续阶段被测试数据阻塞。
 
@@ -879,3 +1144,71 @@ MVP 各阶段需要不同复杂度的测试 HAP：
 8. 切换到后台再回前台，生命周期正确
 9. 退出 HAP，返回 HOA 主界面
 10. 选择另一个 .hap 文件，同样正常运行
+
+## 附录 D: .abc 字节码运行时——各阶段验证点汇总
+
+.abc 字节码的运行时能力贯穿 MVP 的每个阶段，以下是各阶段的关键验证点：
+
+| 阶段 | .abc 运行时验证项 | 成功标志 | 失败排查 |
+|------|-------------------|---------|---------|
+| **Stage 0** | ArkUI-X 构建产出 `libarkui_android.so` 中包含 Ark VM | `nm -D libarkui_android.so \| grep JSNApi` 有输出 | 构建失败 → 检查 NDK 版本和构建参数 |
+| **Stage 1** | Ark VM 创建 + .abc 加载 + 字节码执行 | `hello.abc → exit_code=42` | VM 创建失败 → .so 加载问题；执行失败 → 版本检查或入口点不对 |
+| **Stage 2** | ArkUI-X 完整运行时初始化 + etsstdlib.abc 加载 | logcat 中 `ParseBundleComplete` + `CreateRuntime` 成功 | 缺少 systemres → 添加系统资源；.so 缺失 → 检查 jniLibs |
+| **Stage 3** | 预编译 .abc 在 ArkUI 渲染管线中执行 | "Hello World" UI 渲染 + 交互 | `Unable to find __EntryWrapper` → 入口类不匹配；黑屏 → .abc 未找到 |
+| **Stage 5** | 从 HAP 动态提取 .abc 并加载执行 | 从 .hap 文件直接运行 | `CheckFileVersion` 失败 → 字节码版本不兼容 |
+| **Stage 6** | .abc 中 $r() 引用的 resId 解析 | 资源值正确显示 | `resources.index` 缺失或格式错误 |
+| **Stage 7** | .abc 中的 router / Ability 生命周期调用 | 页面跳转 + 生命周期回调 | NAPI Shim 未注册 → `@ohos.*` 模块找不到 |
+
+### 字节码版本兼容性验证方法
+
+1. **检查 .abc 版本号**：
+   ```bash
+   # 读取 .abc 头部的 version 字段 (offset 0x0C, 4 bytes)
+   xxd -l 16 -s 0x0C modules.abc
+   # 输出: 0c00 0000 0d00 0000 → version [12, 0, 0, 13]
+   ```
+
+2. **检查运行时支持的版本范围**：
+   ```cpp
+   // ArkUI-X: /src/arkui-x/arkcompiler/runtime_core/libpandafile/file.h
+   static constexpr std::array<uint8_t, VERSION_SIZE> STATIC_VERSION = {0, 0, 0, 7};
+   // 最低兼容版本: STATIC_VERSION
+   // 最高兼容版本: 当前版本 (13.0.0.0)
+   ```
+
+3. **运行时版本检查日志**：
+   ```
+   // 成功
+   I/ArkVM: CheckFileVersion: version [12, 0, 6, 0] is supported
+
+   // 失败
+   E/ArkVM: CheckFileVersion: version [14, 0, 0, 0] is NOT supported, max is [13, 0, 0, 0]
+   ```
+
+### NAPI 模块注册链路（.abc 运行时关键路径）
+
+ArkTS 代码中的 `import ... from '@ohos.xxx'` 或 `import ... from '@kit.XxxKit'` 触发的模块加载链路：
+
+```
+ArkTS: import http from '@ohos.net.http'
+  │
+  ▼ [Ark VM 解释器]
+ModuleManager::LoadModule("@ohos:net.http")
+  │
+  ▼ [ModulePathHelper 解析 OhmUrl]
+ModuleResolver::Resolve(ohmUrl)
+  ├─ 识别前缀 @ohos: → OHOS_MODULE 类型
+  │
+  ▼ [NativeModuleManager]
+NativeModuleManager::LoadNativeModule("net.http")
+  ├─ 查找已注册的 NAPI 模块
+  ├─ dlopen("libnet_http_napi.z.so") → __attribute__((constructor))
+  ├─ napi_module_register(&g_module)
+  ├─ registerCallback(env, exports) → InitHttpModule()
+  └─ exports = { request: [C++ function], ... }
+  │
+  ▼ [返回给 ArkTS]
+http.request(url) → NAPI OhosHttpGet() → JNI → Android OkHttp
+```
+
+**HOA 的拦截点**：在 `NativeModuleManager::LoadNativeModule()` 中，对于 `@ohos:` 前缀的模块，返回我们的 NAPI Shim 实现而非 OpenHarmony 系统库。
