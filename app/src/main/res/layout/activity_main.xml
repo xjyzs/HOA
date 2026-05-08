@@ -2,26 +2,58 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="24dp">
+    android:orientation="vertical">
 
+    <!-- Runtime status bar -->
     <TextView
-        android:id="@+id/status_text"
+        android:id="@+id/runtime_status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="HOA - Initializing..."
-        android:textSize="16sp"
-        android:gravity="center" />
+        android:padding="12dp"
+        android:textSize="13sp"
+        android:background="?android:attr/colorBackgroundFloating"
+        android:textColor="?android:attr/textColorSecondary" />
 
-    <Button
-        android:id="@+id/launch_button"
-        android:layout_width="wrap_content"
+    <!-- Installed HAPs list -->
+    <TextView
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:text="Launch HAP"
-        android:textSize="18sp"
-        android:paddingHorizontal="32dp"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="4dp"
+        android:text="Installed HAPs"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="?android:attr/textColorSecondary" />
+
+    <ListView
+        android:id="@+id/hap_list"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="?android:attr/listDivider"
+        android:dividerHeight="1dp" />
+
+    <TextView
+        android:id="@+id/empty_hint"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="No HAPs installed yet.\nTap below to install one."
+        android:textSize="15sp"
+        android:textColor="?android:attr/textColorSecondary"
+        android:visibility="gone" />
+
+    <!-- Install button -->
+    <Button
+        android:id="@+id/install_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:text="Install HAP"
+        android:textSize="16sp"
         android:paddingVertical="12dp" />
 
 </LinearLayout>
