@@ -1,0 +1,12 @@
+[submodule "third_party/arkcompiler_runtime_core"]
+	path = third_party/arkcompiler_runtime_core
+	url = https://gitee.com/openharmony/arkcompiler_runtime_core.git
+[submodule "third_party/ace_engine"]
+	path = third_party/ace_engine
+	url = https://gitee.com/openharmony/arkui_ace_engine.git
+[submodule "third_party/arkui_for_android"]
+	path = third_party/arkui_for_android
+	url = https://gitee.com/arkui-x/arkui_for_android.git
+[submodule "third_party/app_framework"]
+	path = third_party/app_framework
+	url = https://gitee.com/arkui-x/app_framework.git

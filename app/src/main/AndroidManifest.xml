@@ -32,6 +32,12 @@
             android:configChanges="orientation|keyboard|layoutDirection|screenSize|uiMode|smallestScreenSize|density"
             android:windowSoftInputMode="adjustResize|stateHidden" />
 
+        <activity
+            android:name=".runtime.StageActivityV2"
+            android:exported="false"
+            android:configChanges="orientation|keyboard|layoutDirection|screenSize|uiMode|smallestScreenSize|density"
+            android:windowSoftInputMode="adjustResize|stateHidden" />
+
     </application>
 
 </manifest>

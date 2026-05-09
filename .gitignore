@@ -23,3 +23,6 @@ app/src/main/jniLibs/
 app/libs/*.jar
 app/libs/*.aar
 *.so
+
+third_party/build_android
+third_party/build_gen
