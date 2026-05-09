@@ -102,6 +102,30 @@ do_patch() {
         log_info "  inst_templates.yaml -> symlink to ir_builder/inst_templates.yaml"
     fi
 
+    # Create platforms/mobile/ directory (not present in upstream submodule)
+    local mobile_dir="${SRC_ROOT}/platforms/mobile/libpandabase"
+    if [ ! -d "${mobile_dir}" ]; then
+        mkdir -p "${mobile_dir}"
+        # library_loader_load.cpp — mobile uses the same dlopen/dlsym as Unix
+        echo '// Mobile uses the same dlopen/dlsym as Unix' > "${mobile_dir}/library_loader_load.cpp"
+        echo '#include "platforms/unix/libpandabase/library_loader_load.cpp"' >> "${mobile_dir}/library_loader_load.cpp"
+        # coherency_line_size.h
+        cat > "${mobile_dir}/coherency_line_size.h" <<'HEADEREOF'
+#ifndef PANDA_COHERENCY_LINE_SIZE_H_
+#define PANDA_COHERENCY_LINE_SIZE_H_
+
+#include <cstddef>
+#include "libpandabase/cpu_features.h"
+
+namespace ark {
+inline constexpr size_t COHERENCY_LINE_SIZE = CACHE_LINE_SIZE;
+}  // namespace ark
+
+#endif  // PANDA_COHERENCY_LINE_SIZE_H_
+HEADEREOF
+        log_info "  Created platforms/mobile/libpandabase/ (missing from upstream)"
+    fi
+
     # Add marker to patched files so we can detect re-application
     for f in \
         compiler/optimizer/code_generator/encode_visitor.cpp \
@@ -882,6 +906,70 @@ ICUEOF
             --require "${SRC_ROOT}/verification/verification.rb" 2>/dev/null && true
     done
     log_info "  Verification ISA templates generated"
+
+    # Post-codegen fix: make loadLibraryWithPermissionCheck intrinsic optional.
+    # etsstdlib.abc may not contain this method (added in newer stdlib versions),
+    # but the generated intrinsics_gen.h treats it as fatal. Match HongEngine behavior:
+    # log WARNING and continue instead of ERROR + return false.
+    local ig="${GEN_RUNTIME}/intrinsics_gen.h"
+    if [ -f "${ig}" ]; then
+        if grep -q "hasLoadLibPerm" "${ig}" 2>/dev/null; then
+            log_info "  intrinsics_gen.h: loadLibraryWithPermissionCheck already optional, skipping"
+        elif grep -q "loadLibraryWithPermissionCheck" "${ig}" 2>/dev/null; then
+            log_info "  intrinsics_gen.h: making loadLibraryWithPermissionCheck optional"
+            python3 -c "
+import re
+with open('${ig}', 'r') as f:
+    content = f.read()
+
+old = '''        auto method = klass->GetDirectMethod(mutf8Name, proto);
+        if (method == nullptr) {
+            LOG(ERROR, RUNTIME) << \"Cannot find method 'std.core.ETSGLOBAL.loadLibraryWithPermissionCheck' in space 'ets'\";
+            return false;
+        }
+
+#ifndef PANDA_PRODUCT_BUILD
+        if (!blacklist.empty() && std::find(blacklist.begin(), blacklist.end(), static_cast<const char *>(\"std.core.ETSGLOBAL::loadLibraryWithPermissionCheck\")) != blacklist.end()) {
+           LOG(DEBUG, RUNTIME) << \"Skipping intrinsic linkage for blacklisted method std.core.ETSGLOBAL::loadLibraryWithPermissionCheck\";
+        } else {
+#endif // PANDA_PRODUCT_BUILD
+            method->SetIntrinsic(Intrinsic::STD_CORE_LOAD_LIBRARY_WITH_PERMISSION_CHECK);
+            method->SetCompiledEntryPoint(reinterpret_cast<const void *>(LoadLibraryWithPermissionCheckBridgeSelectorEntryPoint));
+#ifndef PANDA_PRODUCT_BUILD
+        }
+#endif // PANDA_PRODUCT_BUILD
+    }'''
+
+new = '''        auto method = klass->GetDirectMethod(mutf8Name, proto);
+        bool hasLoadLibPerm = (method != nullptr);
+        if (!hasLoadLibPerm) {
+            LOG(WARNING, RUNTIME) << \"Cannot find method 'std.core.ETSGLOBAL.loadLibraryWithPermissionCheck' in space 'ets' -- ignoring\";
+        }
+        if (hasLoadLibPerm) {
+
+#ifndef PANDA_PRODUCT_BUILD
+        if (!blacklist.empty() && std::find(blacklist.begin(), blacklist.end(), static_cast<const char *>(\"std.core.ETSGLOBAL::loadLibraryWithPermissionCheck\")) != blacklist.end()) {
+           LOG(DEBUG, RUNTIME) << \"Skipping intrinsic linkage for blacklisted method std.core.ETSGLOBAL::loadLibraryWithPermissionCheck\";
+        } else {
+#endif // PANDA_PRODUCT_BUILD
+            method->SetIntrinsic(Intrinsic::STD_CORE_LOAD_LIBRARY_WITH_PERMISSION_CHECK);
+            method->SetCompiledEntryPoint(reinterpret_cast<const void *>(LoadLibraryWithPermissionCheckBridgeSelectorEntryPoint));
+#ifndef PANDA_PRODUCT_BUILD
+        }
+#endif // PANDA_PRODUCT_BUILD
+        } // hasLoadLibPerm
+    }'''
+
+if old in content:
+    content = content.replace(old, new)
+    with open('${ig}', 'w') as f:
+        f.write(content)
+    print('done')
+else:
+    print('pattern not found — skipping')
+"
+        fi
+    fi
 
     log_info "Code generation complete."
 }

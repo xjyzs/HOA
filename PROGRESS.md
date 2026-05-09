@@ -111,7 +111,24 @@ build_runtime.sh all
 
 #### APK 状态
 - `./gradlew assembleDebug` — BUILD SUCCESSFUL，94MB APK，17 个 native 库
-- 设备验证：Honor 设备 (192.168.1.14:41913) 当前网络不可达
+
+#### 设备验证结果 (2026-05-09)
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| Stage 0: APK 安装 & 启动 | ✅ | Honor YLE-W09, arm64-v8a |
+| Stage 1: .so 加载链 | ✅ | 12 个库全部加载成功，libarkruntime.so (18MB) ~4ms |
+| Stage 2: ABC 文件验证 | ✅ | hello.abc (228B, PANDA magic, v0.0.0.5) + etsstdlib.abc (1.3MB) |
+| Stage 3: ETS VM 创建 | ✅ | `ark::ets::CreateRuntime` 成功 |
+| Stage 4: ETS 模块执行 | ✅ | `hello.abc` 执行成功，exit_code=42 |
+
+#### 验证中修复的问题
+
+**问题 1: Panda Logger 无 Android 输出** — `ets_vm_api.cpp` 的 `LogPrint` 函数仅在 `PANDA_TARGET_OHOS` 下设置 `SetMobileLog`，Android 上所有 LOG() 输出重定向到 `std::cerr`（无法在 logcat 查看）。修复：用 `__android_log_print` 替换 `LogPrint` 实现，移除 OHOS 条件编译，为 `libarkruntime.so` 链接 `liblog`。
+
+**问题 2: 缺少 `platforms/mobile/` 目录** — CMakeLists.txt 引用 `platforms/mobile/libpandabase/` 但子模块仅有 `platforms/unix/` 和 `platforms/windows/`。修复：创建 `platforms/mobile/libpandabase/` 目录，添加 `library_loader_load.cpp`（包含 unix 实现）和 `coherency_line_size.h`。
+
+**问题 3: `loadLibraryWithPermissionCheck` intrinsic 致命错误** — 代码生成的 `intrinsics_gen.h` 将 etsstdlib.abc 中缺少 `loadLibraryWithPermissionCheck` 方法视为 ERROR（返回 false）。etsstdlib.abc 版本不包含此方法（该方法是新增的）。修复：将生成的代码改为 WARNING + 忽略（与 HongEngine 行为一致），使 intrinsic 初始化在方法缺失时继续运行而非失败。
 
 ---
 
@@ -133,8 +150,8 @@ build_runtime.sh all
 
 ### 其他待办
 - MainActivity 添加启动 StageActivityV2 的按钮（目前只能通过 adb 启动）
-- 设备验证：ETS VM 执行、ABC 文件加载
-- 设备验证后，进一步验证交叉编译产物的 asm_defines.h 偏移量在真实设备上是否运行正常
+- 验证 fibonacci.abc（递归计算测试）
+- 修复 `libimonitor.so` 加载警告（非致命，OHOS 特定库）
 
 ### 文档
 - BUILD.md — 构建文档已完成

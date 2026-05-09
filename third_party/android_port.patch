@@ -88,8 +88,94 @@
  
  static EtsRuntimeLinker *GetEtsRuntimeLinker(ClassLinkerContext *ctx)
 --- arkcompiler_runtime_core/static_core/plugins/ets/runtime/ets_vm_api.cpp	2026-05-09 08:57:50.483760313 +0800
-+++ /data/share/HongEngine/engine/arkcompiler_runtime_core/static_core/plugins/ets/runtime/ets_vm_api.cpp	2026-05-06 12:48:04.643676008 +0800
-@@ -142,7 +142,7 @@
++++ arkcompiler_runtime_core/static_core/plugins/ets/runtime/ets_vm_api.cpp	2026-05-09 22:10:00.000000000 +0800
+@@ -16,67 +16,33 @@
+ #include <iostream>
+ #include "ets_vm_api.h"
+ #include "ets_vm.h"
+ #include "generated/base_options.h"
+
+-#ifdef PANDA_TARGET_OHOS
+-#include <hilog/log.h>
++#include <android/log.h>
+
+ static void LogPrint([[maybe_unused]] int id, int level, const char *component, [[maybe_unused]] const char *fmt,
+                      const char *msg)
+ {
+-#ifdef PANDA_OHOS_USE_INNER_HILOG
+-    constexpr static unsigned int ARK_DOMAIN = 0xD003F00;
+-    constexpr static auto TAG = "ArkEtsVm";
+-    constexpr static OHOS::HiviewDFX::HiLogLabel LABEL = {LOG_CORE, ARK_DOMAIN, TAG};
++    int prio;
+     switch (level) {
+         case ark::Logger::PandaLog2MobileLog::DEBUG:
+-            OHOS::HiviewDFX::HiLog::Debug(LABEL, "%{public}s", msg);
++            prio = ANDROID_LOG_DEBUG;
+             break;
+         case ark::Logger::PandaLog2MobileLog::INFO:
+-            OHOS::HiviewDFX::HiLog::Info(LABEL, "%{public}s", msg);
+-            break;
+-        case ark::Logger::PandaLog2MobileLog::ERROR:
+-            OHOS::HiviewDFX::HiLog::Error(LABEL, "%{public}s", msg);
+-            break;
+-        case ark::Logger::PandaLog2MobileLog::FATAL:
+-            OHOS::HiviewDFX::HiLog::Fatal(LABEL, "%{public}s", msg);
++            prio = ANDROID_LOG_INFO;
+             break;
+         case ark::Logger::PandaLog2MobileLog::WARN:
+-            OHOS::HiviewDFX::HiLog::Warn(LABEL, "%{public}s", msg);
+-            break;
+-        default:
+-            UNREACHABLE();
+-    }
+-#else
+-    switch (level) {
+-        case ark::Logger::PandaLog2MobileLog::DEBUG:
+-            OH_LOG_Print(LOG_APP, LOG_DEBUG, 0xFF00, "ArkEtsVm", "%s: %s", component, msg);
+-            break;
+-        case ark::Logger::PandaLog2MobileLog::INFO:
+-            OH_LOG_Print(LOG_APP, LOG_INFO, 0xFF00, "ArkEtsVm", "%s: %s", component, msg);
++            prio = ANDROID_LOG_WARN;
+             break;
+         case ark::Logger::PandaLog2MobileLog::ERROR:
+-            OH_LOG_Print(LOG_APP, LOG_ERROR, 0xFF00, "ArkEtsVm", "%s: %s", component, msg);
++            prio = ANDROID_LOG_ERROR;
+             break;
+         case ark::Logger::PandaLog2MobileLog::FATAL:
+-            OH_LOG_Print(LOG_APP, LOG_FATAL, 0xFF00, "ArkEtsVm", "%s: %s", component, msg);
+-            break;
+-        case ark::Logger::PandaLog2MobileLog::WARN:
+-            OH_LOG_Print(LOG_APP, LOG_WARN, 0xFF00, "ArkEtsVm", "%s: %s", component, msg);
++            prio = ANDROID_LOG_FATAL;
+             break;
+         default:
+-            UNREACHABLE();
++            prio = ANDROID_LOG_DEFAULT;
+     }
+-#endif  // PANDA_OHOS_USE_INNER_HILOG
+-}
+-#else
+-static void LogPrint([[maybe_unused]] int id, [[maybe_unused]] int level, [[maybe_unused]] const char *component,
+-                     [[maybe_unused]] const char *fmt, const char *msg)
+-{
+-    std::cerr << msg << "\n";
++    __android_log_print(prio, "ArkEtsVm", "%s: %s", component ? component : "?", msg);
+ }
+-#endif  // PANDA_TARGET_OHOS
+
+ namespace ark::ets {
+
+@@ -84,9 +50,7 @@ bool CreateRuntime(std::function<bool(base_options::Options *, RuntimeOptions *)
+ {
+     auto runtimeOptions = ark::RuntimeOptions("app");
+     runtimeOptions.SetLoadRuntimes({"ets"});
+-#ifdef PANDA_TARGET_OHOS
+     runtimeOptions.SetMobileLog(reinterpret_cast<void *>(LogPrint));
+-#endif
+
+     ark::base_options::Options baseOptions("app");
+
+@@ -142,7 +106,7 @@ std::pair<bool, int> ExecuteModule(std::string_view name)
      auto runtime = ark::Runtime::GetCurrent();
      auto pfPath = runtime->GetPandaFiles()[0];
      LOG(INFO, RUNTIME) << "ExecuteEtsModule: '" << pfPath << "'";
@@ -98,6 +184,11 @@
      auto res = ark::Runtime::GetCurrent()->ExecutePandaFile(pfPath, moduleEp, {});
      LOG(INFO, RUNTIME) << "ExecuteEtsModule: result = " << (res ? std::to_string(res.Value()) : "failed");
      return res ? std::make_pair(true, res.Value()) : std::make_pair(false, 1);
+@@ -181,3 +145,4 @@ void LogError(const std::string &msg)
+ }
+
+ }  // namespace ark::ets
++// android_port: applied
 --- arkcompiler_runtime_core/static_core/runtime/arch/asm_support.cpp	2026-05-09 08:57:52.359897997 +0800
 +++ /data/share/HongEngine/engine/arkcompiler_runtime_core/static_core/runtime/arch/asm_support.cpp	2026-05-04 22:58:24.992129229 +0800
 @@ -26,10 +26,12 @@
