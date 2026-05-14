@@ -119,7 +119,7 @@ class HapInstaller(private val context: Context) {
             ?.mapNotNull { moduleDir ->
                 // Directory name format: bundleName.moduleName
                 val dirName = moduleDir.name
-                val dotIndex = dirName.indexOf('.')
+                val dotIndex = dirName.lastIndexOf('.')
                 if (dotIndex < 0) return@mapNotNull null
 
                 val bundleName = dirName.substring(0, dotIndex)
