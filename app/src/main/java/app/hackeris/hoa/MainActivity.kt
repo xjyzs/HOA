@@ -151,6 +151,10 @@ class MainActivity : AppCompatActivity() {
             putExtra("BUNDLE_NAME", hap.bundleName)
             putExtra("MODULE_NAME", hap.moduleName)
             putExtra("ABILITY_NAME", hap.mainAbility)
+            // ArkUI-X StageActivity expects to be the root of its task.
+            // Without CLEAR_TASK, the rendering surface may not initialize
+            // correctly when another Activity already exists in the task.
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
         }
         startActivity(intent)
     }
