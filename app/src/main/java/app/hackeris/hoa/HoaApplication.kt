@@ -1,7 +1,6 @@
 package app.hackeris.hoa
 
 import android.util.Log
-import app.hackeris.hoa.hap.HapExtractor
 import ohos.stage.ability.adapter.StageApplication
 
 class HoaApplication : StageApplication() {
@@ -16,10 +15,6 @@ class HoaApplication : StageApplication() {
         Log.e(TAG, "========== HOA Application onCreate START ==========")
         Log.e(TAG, "Process: ${android.os.Process.myPid()}")
         Log.e(TAG, "ABI: ${android.os.Build.SUPPORTED_ABIS.toList()}")
-
-        // Extract HAP contents to filesDir BEFORE StageApplication init
-        // This ensures the runtime loads from HAP, not from APK assets
-        extractHapModules()
 
         // Try explicit native library load first for better error reporting
         try {
@@ -69,25 +64,6 @@ class HoaApplication : StageApplication() {
         }
 
         Log.e(TAG, "========== HOA Application onCreate END ==========")
-    }
-
-    private fun extractHapModules() {
-        Log.e(TAG, "extractHapModules() called")
-        try {
-            val extracted = HapExtractor.extractHapToFilesDir(
-                this,
-                "hap/entry.hap",
-                "app.hackeris.harmonyexample",
-                "entry"
-            )
-            if (extracted) {
-                Log.e(TAG, "HAP module 'entry' extracted successfully")
-            } else {
-                Log.e(TAG, "Failed to extract HAP module 'entry'")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "extractHapModules FAILED", e)
-        }
     }
 
     companion object {

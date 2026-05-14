@@ -27,6 +27,11 @@
         </activity>
 
         <activity
+            android:name=".DevTestActivity"
+            android:exported="true"
+            android:label="HOA Dev Test" />
+
+        <activity
             android:name=".HoaAbilityActivity"
             android:exported="true"
             android:configChanges="orientation|keyboard|layoutDirection|screenSize|uiMode|smallestScreenSize|density"

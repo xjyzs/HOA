@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center">
+
+    <TextView
+        android:id="@+id/devtest_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="HOA Dev Test"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp" />
+
+    <TextView
+        android:id="@+id/devtest_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Checking..."
+        android:textSize="14sp"
+        android:gravity="center"
+        android:layout_marginBottom="32dp" />
+
+    <Button
+        android:id="@+id/devtest_extract_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Extract Test HAP from Assets"
+        android:layout_marginBottom="12dp" />
+
+    <Button
+        android:id="@+id/devtest_launch_button"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Launch Test HAP"
+        android:enabled="false" />
+
+</LinearLayout>
