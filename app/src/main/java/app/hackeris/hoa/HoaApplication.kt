@@ -52,17 +52,6 @@ class HoaApplication : StageApplication() {
             Log.e(TAG, "setOhosHapMode not available in current .so — patches inactive", e)
         }
 
-        // Run Stage 1 verification checklist
-        try {
-            val results = Stage1Verifier.runAll(this)
-            val failed = results.count { !it.passed }
-            if (failed > 0) {
-                Log.e(TAG, "Stage 1 verification: $failed check(s) FAILED — see HOA.Verify logs")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Stage 1 verifier crashed", e)
-        }
-
         Log.e(TAG, "========== HOA Application onCreate END ==========")
     }
 
