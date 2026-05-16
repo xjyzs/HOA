@@ -25,6 +25,9 @@
 | @ohos NAPI 模块全量加载 | ✅ | 12 个插件 .so 正常加载，无 "export undefined" 报错 |
 | OHOS → Android 权限映射 | ✅ | INTERNET（普通权限）绕过 JNI 直接授予，危险权限走运行时流程 |
 | wan-harmony HAP 端到端运行 | ✅ | 首页入口正常，6 个 Tab 可切换 |
+| 最近任务列表显示 HAP 名称和图标 | ✅ | `setTaskDescription()` 动态设置，替换 "HOA" 标签 |
+| MainActivity HAP 列表图标 | ✅ | 从 module.json 解析 startWindowIcon → 后台加载 → 缓存 |
+| .hap 文件关联 | ✅ | intent filter 注册，文件管理器/分享均可直接安装 |
 
 ---
 
@@ -154,6 +157,13 @@ cd <hoa-project>
 
 - `HoaApplication` — 继承 StageApplication，设置 OHOS 模式
 - `HoaAbilityActivity` — 继承 StageActivity，多进程隔离
+- `applyHapTaskDescription()` — 从 HAP 的 module.json 解析应用名称和 startWindowIcon，动态设置 Activity 标题和任务描述（最近任务列表显示 HAP 身份）
+
+### UI 体验
+
+- 最近任务列表：动态显示 HAP 的应用名称和图标（替换 "HOA"）
+- MainActivity HAP 列表：每个 HAP 显示对应的 startWindowIcon
+- .hap 文件关联：从文件管理器直接打开或分享安装 HAP
 
 ### NAPI 模块支持
 
@@ -193,6 +203,7 @@ cd <hoa-project>
 
 | 问题 | 影响 | 说明 |
 |------|------|------|
+| Pad 窗口模式标题栏显示 "HOA" | 窗口标题栏 | Android `android:label`/`icon` 安装时由 PackageManager 固化，运行时无法动态修改（微信小程序同获此限制） |
 | Vulkan RenderContext 返回 nullptr | 首次渲染可能闪烁 | 设备不支持 Vulkan，走 GLES fallback |
 | WebView 插件 init 失败 | WebPage 页面无法使用 | `AceWebBase.<init>` 构造函数签名不匹配 |
 | `stage_asset_provider.cpp` read file failed | 无 | 日志噪音，不影响渲染 |
