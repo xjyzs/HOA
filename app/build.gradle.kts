@@ -59,6 +59,7 @@ android {
 
 dependencies {
     implementation(files("libs/arkui_android_adapter.jar"))
+    implementation(files("libs/ace_web_webview_android.jar"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.androidx.core.ktx)
