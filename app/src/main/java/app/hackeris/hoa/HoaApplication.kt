@@ -13,9 +13,24 @@ class HoaApplication : StageApplication() {
 
     override fun onCreate() {
         Log.e(TAG, "========== HOA Application onCreate START ==========")
-        Log.e(TAG, "Process: ${android.os.Process.myPid()}")
-        Log.e(TAG, "ABI: ${android.os.Build.SUPPORTED_ABIS.toList()}")
+        Log.e(TAG, "Process: ${android.os.Process.myPid()}  Name: ${currentProcessName()}")
 
+        // Only initialize the ArkUI-X runtime (libarkui_android.so, ~79 MB) in
+        // HAP worker processes (":hap*").  The main process only hosts
+        // MainActivity and does not need the native engine at all.
+        // This shaves ~1-2 s off the cold-start time of the launcher activity.
+        if (isHapProcess()) {
+            Log.e(TAG, "HAP process detected — initializing ArkUI-X runtime")
+            initArkUIX()
+        } else {
+            Log.e(TAG, "Main process — skipping ArkUI-X init (not needed for launcher)")
+            initSuccess = true   // main process is always "ready"
+        }
+
+        Log.e(TAG, "========== HOA Application onCreate END ==========")
+    }
+
+    private fun initArkUIX() {
         // Try explicit native library load first for better error reporting
         try {
             System.loadLibrary("arkui_android")
@@ -43,16 +58,27 @@ class HoaApplication : StageApplication() {
         // Enable OHOS HAP mode AFTER super.onCreate() because the JNI methods
         // (including nativeSetOhosHapMode) are registered lazily by
         // AppModeConfig.nativeInitAppMode() → StageJniRegistry::Register().
-        // The env var is set before the ETS VM is created (VM is created later
-        // when the first Ability launches), so patches will be active.
         try {
             StageApplication.setOhosHapMode(true)
             Log.e(TAG, "setOhosHapMode(true) OK")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "setOhosHapMode not available in current .so — patches inactive", e)
         }
+    }
 
-        Log.e(TAG, "========== HOA Application onCreate END ==========")
+    private fun isHapProcess(): Boolean {
+        val name = currentProcessName()
+        return name.contains(":hap")
+    }
+
+    private fun currentProcessName(): String {
+        // ActivityManager.getRunningAppProcesses() works reliably on all API levels.
+        val pid = android.os.Process.myPid()
+        val manager = getSystemService(android.app.ActivityManager::class.java)
+        manager?.runningAppProcesses?.forEach { info ->
+            if (info.pid == pid) return info.processName
+        }
+        return "unknown"
     }
 
     companion object {
