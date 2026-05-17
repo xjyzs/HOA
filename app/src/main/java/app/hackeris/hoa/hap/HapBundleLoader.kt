@@ -64,6 +64,7 @@ class HapBundleLoader {
         val moduleObj = root.getJSONObject("module")
 
         val bundleName = appObj?.optString("bundleName", "") ?: ""
+        val label = appObj?.optString("label", "") ?: ""
         val vendor = appObj?.optString("vendor", "") ?: ""
         val versionCode = appObj?.optInt("versionCode", 1) ?: 1
         val versionName = appObj?.optString("versionName", "1.0.0") ?: "1.0.0"
@@ -93,6 +94,7 @@ class HapBundleLoader {
 
         return ModuleConfig(
             bundleName = bundleName,
+            label = label,
             vendor = vendor,
             versionCode = versionCode,
             versionName = versionName,
@@ -220,6 +222,239 @@ class HapBundleLoader {
             } catch (_: Exception) {
                 null
             }
+        }
+    }
+
+    companion object {
+
+        /**
+         * Resolves the app display label for an installed HAP.
+         *
+         * If moduleConfig.label is a $string:xxx reference, reads resources.index
+         * from the installed module directory to resolve it.  Falls back to
+         * bundleName on failure.
+         */
+        fun resolveLabel(moduleDir: java.io.File, config: ModuleConfig): String {
+            val rawLabel = config.label
+            if (!rawLabel.startsWith("\$string:")) {
+                return rawLabel.ifEmpty { config.bundleName }
+            }
+            val key = rawLabel.removePrefix("\$string:")
+            val resolved = parseStringFromIndex(moduleDir, key)
+            val result = resolved ?: config.bundleName
+            return result
+        }
+
+        private fun parseStringFromIndex(moduleDir: java.io.File, targetKey: String): String? {
+            val indexFile = java.io.File(moduleDir, "resources.index")
+            if (!indexFile.exists()) return null
+            val data = try { indexFile.readBytes() } catch (_: Exception) { return null }
+
+            // Determine version from the version string prefix.
+            // Old format: "Restool X.Y.Z" → use V1 (KEYS+IDSS structure inline)
+            // New format: "RestoolV2 X.Y.Z" → use V2 parser
+            val versionPrefix = if (data.size >= 10) {
+                String(data, 0, minOf(10, data.size), Charsets.UTF_8)
+            } else ""
+            return if (versionPrefix.startsWith("RestoolV2")) {
+                parseV2(data, targetKey)
+            } else {
+                parseV1(data, targetKey)
+            }
+        }
+
+        // ---- V2 parser (RestoolV2 6.x, ArkUI-X) ----
+
+        /**
+         * Parses the V2 resources.index format based on the authoritative
+         * ArkUI-X reader at developtools/global_resource_tool/src/resource_table.cpp.
+         *
+         * Layout:
+         *   IndexHeaderV2 (140B): version[128] length[4] keyCount[4] dataBlockOffset[4]
+         *   keyCount x KeyConfig (12B + keyParams):
+         *     tag"KEYS"[4] configId[4] keyCount[4] keyParam(type[4]value[4])...
+         *   IdSetHeader (16B):
+         *     tag"IDSS"[4] length[4] typeCount[4] idCount[4]
+         *     typeCount x ResTypeHeader (12B):
+         *       resType[4] length[4] count[4]
+         *       count x ResIndex (12B + nameLen):
+         *         resId[4] offset[4] nameLen[4] name[nameLen]
+         *   DataHeader (at dataBlockOffset, 12B):
+         *     tag"DATA"[4] length[4] idCount[4]
+         *     idCount x ResInfo (12B + valueCount*8B):
+         *       resId[4] length[4] valueCount[4]
+         *       valueCount x (configId[4] dataOffset[4])
+         *   Data pool (after all ResInfo):
+         *     dataLen[2] data[dataLen] ...
+         */
+        private fun parseV2(data: ByteArray, targetKey: String): String? {
+            if (data.size < 140) return null
+
+            val keyCount = readInt32LE(data, 132)
+            val dataBlockOffset = readInt32LE(data, 136)
+            if (keyCount <= 0 || keyCount > 100) return null
+            if (dataBlockOffset <= 0 || dataBlockOffset >= data.size) return null
+
+            // Skip KeyConfigs to find IdSetHeader
+            var pos = 140
+            for (i in 0 until keyCount) {
+                if (pos + 12 > data.size) return null
+                val tag = String(data, pos, 4, Charsets.UTF_8)
+                if (tag != "KEYS") return null
+                val kpCount = readInt32LE(data, pos + 8)
+                if (kpCount > 20) return null
+                pos += 12 + kpCount * 8
+            }
+
+            // Parse IdSetHeader
+            if (pos + 16 > data.size) return null
+            val idssTag = String(data, pos, 4, Charsets.UTF_8)
+            if (idssTag != "IDSS") return null
+            val typeCount = readInt32LE(data, pos + 8)
+            pos += 16
+
+            // Search through ResTypeHeaders and ResIndex entries for target name
+            for (t in 0 until typeCount) {
+                if (pos + 12 > dataBlockOffset) return null
+                // val resType = readInt32LE(data, pos + 0)
+                // val typeLen  = readInt32LE(data, pos + 4)
+                val count = readInt32LE(data, pos + 8)
+                pos += 12
+
+                for (i in 0 until count) {
+                    if (pos + 12 > dataBlockOffset) return null
+                    // val resId = readInt32LE(data, pos)
+                    val resInfoOffset = readInt32LE(data, pos + 4)
+                    val nameLen = readInt32LE(data, pos + 8)
+                    if (nameLen <= 0 || nameLen > 200) return null
+                    if (pos + 12 + nameLen > data.size) return null
+
+                    val name = String(data, pos + 12, nameLen, Charsets.UTF_8)
+                    if (name == targetKey) {
+                        // Found! Read the value from data pool via ResInfo
+                        val result = readV2Value(data, resInfoOffset)
+                        return result
+                    }
+                    pos += 12 + nameLen
+                }
+            }
+            return null
+        }
+
+        private fun readV2Value(data: ByteArray, resInfoOffset: Int): String? {
+            // ResInfo at resInfoOffset: resId[4] length[4] valueCount[4]
+            // then valueCount x (configId[4] dataOffset[4])
+            if (resInfoOffset + 12 > data.size) return null
+
+            val valueCount = readInt32LE(data, resInfoOffset + 8)
+            if (valueCount <= 0 || valueCount > 50) return null
+
+            // Use the first variant's dataOffset
+            val pairPos = resInfoOffset + 12
+            if (pairPos + 8 > data.size) return null
+            // val configId = readInt32LE(data, pairPos)  // not needed
+            val dataOffset = readInt32LE(data, pairPos + 4)
+            if (dataOffset <= 0 || dataOffset + 2 > data.size) return null
+
+            val dataLen = readUInt16LE(data, dataOffset)
+            if (dataLen <= 0 || dataLen > 5000) return null
+            if (dataOffset + 2 + dataLen > data.size) return null
+
+            return String(data, dataOffset + 2, dataLen, Charsets.UTF_8)
+        }
+
+        // ---- V1 parser (Restool 5.x / 6.x, classic format) ----
+        //
+        // Based on OHOS 5.0.1 hap_parser.cpp:
+        //   ResHeader (136B): version[128] length[4] keyCount[4]
+        //   For each key:  KEYS[4] offset[4] keyParamsCount[4]  + keyParams×8B
+        //   At key.offset: IDSS[4] count[4]  + count×IdParam(8B: id+offset)
+        //   At idParam.offset: IdItem(12B: size+resType+id) + valueLen[2]+value[valueLen] + nameLen[2]+name[nameLen]
+
+        private fun parseV1(data: ByteArray, targetKey: String): String? {
+            if (data.size < 136) return null
+            val keyCount = readInt32LE(data, 132)
+            if (keyCount <= 0 || keyCount > 100) return null
+
+            var pos = 136
+            for (ki in 0 until keyCount) {
+                if (pos + 12 > data.size) return null
+                val tag = String(data, pos, 4, Charsets.UTF_8)
+                if (tag != "KEYS") return null
+                val idssOffset = readInt32LE(data, pos + 4)
+                val kpCount = readInt32LE(data, pos + 8)
+                if (kpCount > 20) return null
+                pos += 12 + kpCount * 8
+
+                if (idssOffset + 8 > data.size) continue
+                val idssTag = String(data, idssOffset, 4, Charsets.UTF_8)
+                if (idssTag != "IDSS") continue
+                val idCount = readInt32LE(data, idssOffset + 4)
+                if (idCount <= 0 || idCount > 500) continue
+
+                var ipPos = idssOffset + 8
+                for (ii in 0 until idCount) {
+                    if (ipPos + 8 > data.size) break
+                    // val ipId = readInt32LE(data, ipPos)     // resource id — unused for key lookup
+                    val itemOffset = readInt32LE(data, ipPos + 4)
+                    ipPos += 8
+
+                    if (itemOffset + 12 > data.size) continue
+                    val itemSize = readInt32LE(data, itemOffset)
+                    val resType = readInt32LE(data, itemOffset + 4)
+                    if (itemSize < 14 || itemSize > 5000) continue
+
+                    // itemPos starts after the 12-byte IdItem header
+                    var itemPos = itemOffset + 12
+
+                    // Skip value / array data to reach the name field.
+                    // STRING = 9, INTEGER = 0, BOOLEAN = 12, COLOR = 14, FLOAT = 18,
+                    // MEDIA = 7, PROF = 8
+                    val isArray = (resType == 10 || resType == 11 || resType == 16 ||
+                                   resType == 17 || resType == 22)  // STRINGARRAY|INTARRAY|THEME|PLURALS|PATTERN
+                    if (isArray) {
+                        // arrayLen[2] + N strings (each: strLen[2]+value[strLen+1]) + trailing '\0'
+                        if (itemPos + 2 > data.size) continue
+                        val arrLen = readUInt16LE(data, itemPos)
+                        if (arrLen < 1 || arrLen > 5000) continue
+                        // Skip past the entire packed array (arrLen bytes of string data)
+                        // plus the trailing '\0' after the last element
+                        itemPos += 2 + arrLen + 1
+                    } else {
+                        // valueLen[2] + value[valueLen] (valueLen includes '\0')
+                        if (itemPos + 2 > data.size) continue
+                        val valLen = readUInt16LE(data, itemPos)
+                        if (valLen < 1 || valLen > 5000) continue
+                        if (itemPos + 2 + valLen > data.size) continue
+                        val value = String(data, itemPos + 2, valLen - 1, Charsets.UTF_8)
+                        itemPos += 2 + valLen
+
+                        // Read name
+                        if (itemPos + 2 > data.size) continue
+                        val nameLen = readUInt16LE(data, itemPos)
+                        if (nameLen < 1 || nameLen > 200) continue
+                        if (itemPos + 2 + nameLen > data.size) continue
+                        val name = String(data, itemPos + 2, nameLen - 1, Charsets.UTF_8)
+
+                        if (name == targetKey) return value
+                    }
+                }
+            }
+            return null
+        }
+
+        private fun readInt32LE(data: ByteArray, offset: Int): Int {
+            var result = data[offset].toInt() and 0xFF
+            result = result or ((data[offset + 1].toInt() and 0xFF) shl 8)
+            result = result or ((data[offset + 2].toInt() and 0xFF) shl 16)
+            result = result or ((data[offset + 3].toInt() and 0xFF) shl 24)
+            return result
+        }
+
+        private fun readUInt16LE(data: ByteArray, offset: Int): Int {
+            val low = data[offset].toInt() and 0xFF
+            val high = (data[offset + 1].toInt() and 0xFF) shl 8
+            return low or high
         }
     }
 }

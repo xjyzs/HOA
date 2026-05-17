@@ -12,6 +12,7 @@ data class HapBundle(
 
 data class ModuleConfig(
     val bundleName: String,
+    val label: String,
     val vendor: String,
     val versionCode: Int,
     val versionName: String,

@@ -275,12 +275,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showLongPressMenu(hap: InstalledHap) {
+        val label = HapBundleLoader.resolveLabel(hap.contentDir, hap.moduleConfig)
         val items = arrayOf(
             getString(R.string.btn_app_info),
             getString(R.string.btn_uninstall)
         )
         AlertDialog.Builder(this)
-            .setTitle("${hap.bundleName}/${hap.moduleName}")
+            .setTitle("$label/${hap.moduleName}")
             .setItems(items) { _, which ->
                 when (which) {
                     0 -> showHapInfoDialog(hap)
@@ -292,13 +293,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun showHapInfoDialog(hap: InstalledHap) {
         val config = hap.moduleConfig
+        val label = HapBundleLoader.resolveLabel(hap.contentDir, config)
         val sb = StringBuilder()
 
         fun row(label: String, value: String) {
             sb.append(label).append(": ").append(value).append("\n")
         }
 
-        row(getString(R.string.label_bundle_name), config.bundleName.ifEmpty { "—" })
+        row(getString(R.string.label_bundle_name), label)
+        if (label != config.bundleName) {
+            row("  Package", config.bundleName.ifEmpty { "—" })
+        }
         row(getString(R.string.label_module), "${config.name} (${config.type})")
         if (config.vendor.isNotBlank()) row(getString(R.string.label_vendor), config.vendor)
         row(getString(R.string.label_version), "${config.versionName} (${config.versionCode})")
@@ -380,6 +385,8 @@ class MainActivity : AppCompatActivity() {
         // re-decoding bitmaps on every getView() call.  The cache is small
         // (< 10 entries) and cleared when refreshHapList() replaces this adapter.
         private val iconCache = mutableMapOf<String, android.graphics.Bitmap?>()
+        // Cache resolved display labels to avoid re-scanning resources.index.
+        private val labelCache = mutableMapOf<String, String>()
 
         override fun getCount() = installedHaps.size
         override fun getItem(position: Int) = installedHaps[position]
@@ -389,14 +396,17 @@ class MainActivity : AppCompatActivity() {
             val view = convertView ?: layoutInflater.inflate(R.layout.item_hap, parent, false)
             val hap = installedHaps[position]
 
-            view.findViewById<TextView>(R.id.hap_bundle_name).text = hap.bundleName
+            val cacheKey = "${hap.bundleName}.${hap.moduleName}"
+            val displayLabel = labelCache.getOrPut(cacheKey) {
+                HapBundleLoader.resolveLabel(hap.contentDir, hap.moduleConfig)
+            }
+            view.findViewById<TextView>(R.id.hap_bundle_name).text = displayLabel
             view.findViewById<TextView>(R.id.hap_module_info).text =
                 "${hap.moduleName} | ${hap.moduleConfig.type} | v${hap.moduleConfig.versionName}"
             view.findViewById<TextView>(R.id.hap_ability_info).text =
                 if (hap.mainAbility.isNotBlank()) getString(R.string.label_ability_fmt, hap.mainAbility) else getString(R.string.label_no_ability)
 
             val iconView = view.findViewById<android.widget.ImageView>(R.id.hap_icon)
-            val cacheKey = "${hap.bundleName}.${hap.moduleName}"
             val cached = iconCache[cacheKey]
             if (cached != null || iconCache.containsKey(cacheKey)) {
                 iconView.setImageBitmap(cached)
