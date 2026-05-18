@@ -161,98 +161,33 @@ if ! $ABC_ONLY && ! $RES_ONLY; then
         "$ARKUI_BUILD/arkui/arkui_components/libplatformview.so" \
         "$JNILIBS_DIR/libplatformview.so"
 
-    # A4. Plugin .so — ArkUI-X 跨平台插件库
+    # A4. Plugin .so — ArkUI-X 跨平台插件库（复制所有 plugins/ 下的 .so）
     log "--- A4: Plugin .so ---"
+    for plugin_dir in "$ARKUI_BUILD"/plugins/*/; do
+        copy_so_dir "$plugin_dir"
+    done
 
-    # hilog: OHOS 日志系统 (@ohos.hilog)
-    copy_file \
-        "$ARKUI_BUILD/plugins/hilog/libhilog.so" \
-        "$JNILIBS_DIR/libhilog.so"
-
-    # abilityAccessCtrl: 权限管理 (@ohos.abilityAccessCtrl)，含 Android JNI 后端
-    copy_file \
-        "$ARKUI_BUILD/plugins/ability_access_ctrl/libabilityaccessctrl.so" \
-        "$JNILIBS_DIR/libabilityaccessctrl.so"
-
-    # data.preferences: 键值持久化存储 (@ohos.data.preferences)
-    copy_file "$ARKUI_BUILD/plugins/data/libdata_preferences.so" \
-        "$JNILIBS_DIR/libdata_preferences.so"
-
-    # net.http: HTTP 客户端 (@ohos.net.http / @kit.NetworkKit)
-    copy_file "$ARKUI_BUILD/plugins/net/libnet_http.so" \
-        "$JNILIBS_DIR/libnet_http.so"
-
-    # net.connection: 网络连接状态 (@ohos.net.connection)
-    copy_file "$ARKUI_BUILD/plugins/net/libnet_connection.so" \
-        "$JNILIBS_DIR/libnet_connection.so"
-
-    # net.socket: TCP/UDP socket (@ohos.net.socket)
-    copy_file "$ARKUI_BUILD/plugins/net/libnet_socket.so" \
-        "$JNILIBS_DIR/libnet_socket.so"
-
-    # net.websocket: WebSocket (@ohos.net.webSocket)
-    copy_file "$ARKUI_BUILD/plugins/net/libnet_websocket.so" \
-        "$JNILIBS_DIR/libnet_websocket.so"
-
-    # uri: URI 解析 (@ohos.uri)
-    copy_file "$ARKUI_BUILD/plugins/uri/liburi.so" \
-        "$JNILIBS_DIR/liburi.so"
-
-    # url: URL 解析 (@ohos.url)
-    copy_file "$ARKUI_BUILD/plugins/url/liburl.so" \
-        "$JNILIBS_DIR/liburl.so"
-
-    # util: 基础工具模块
-    copy_file "$ARKUI_BUILD/plugins/util/libutil.so" \
-        "$JNILIBS_DIR/libutil.so"
-
-    # util.HashMap: HashMap 数据结构 (@ohos.util.HashMap)
-    copy_file "$ARKUI_BUILD/plugins/util/libutil_hashmap.so" \
-        "$JNILIBS_DIR/libutil_hashmap.so"
-
-    # web.webview: WebView 组件 (@ohos.web.webview)
-    copy_file "$ARKUI_BUILD/plugins/web/libweb_webview.so" \
-        "$JNILIBS_DIR/libweb_webview.so"
+    # web.webview JAR adapter
     copy_file "$ARKUI_BUILD/plugins/web/ace_web_webview_android.jar" \
         "$JAR_DIR/ace_web_webview_android.jar"
 
-    # ---- 以下为其他常用插件，按需取消注释 ----
-    # copy_file "$ARKUI_BUILD/plugins/i18n/libi18n.so"             "$JNILIBS_DIR/libi18n.so"
-    # copy_file "$ARKUI_BUILD/plugins/intl/libintl.so"             "$JNILIBS_DIR/libintl.so"
-    # copy_file "$ARKUI_BUILD/plugins/process/libprocess.so"       "$JNILIBS_DIR/libprocess.so"
-    # copy_file "$ARKUI_BUILD/plugins/display/libdisplay.so"       "$JNILIBS_DIR/libdisplay.so"
-    # copy_file "$ARKUI_BUILD/plugins/device_info/libdeviceinfo.so" "$JNILIBS_DIR/libdeviceinfo.so"
-    # copy_file "$ARKUI_BUILD/plugins/file/libfile_fs.so"          "$JNILIBS_DIR/libfile_fs.so"
-    # copy_file "$ARKUI_BUILD/plugins/file/libfile_picker.so"      "$JNILIBS_DIR/libfile_picker.so"
-    # copy_file "$ARKUI_BUILD/plugins/worker/libworker.so"         "$JNILIBS_DIR/libworker.so"
-    # copy_file "$ARKUI_BUILD/plugins/taskpool/libtaskpool.so"     "$JNILIBS_DIR/libtaskpool.so"
+    # A5. Third-party 传递依赖
+    log "--- A5: Third-party 依赖 ---"
 
-    # A5. 传递依赖 — 以上插件所需的基础库
-    log "--- A5: 传递依赖 ---"
-
-    # net_utils: net.* 插件 (http/socket/websocket) 的内部依赖
-    copy_file "$ARKUI_BUILD/plugins/net_utils/libnet_utils.so" \
-        "$JNILIBS_DIR/libnet_utils.so"
-
-    # curl: libnet_http.so 的依赖
     copy_file "$ARKUI_BUILD/thirdparty/curl/libcurl_shared.so" \
         "$JNILIBS_DIR/libcurl_shared.so"
 
-    # nghttp2: libcurl_shared.so 的 HTTP/2 依赖
     copy_file "$ARKUI_BUILD/thirdparty/nghttp2/libnghttp2_shared.so" \
         "$JNILIBS_DIR/libnghttp2_shared.so"
 
-    # openssl: HTTP/TLS 加解密 (libnet_http, libutil 等依赖)
     copy_file "$ARKUI_BUILD/thirdparty/openssl/libcrypto_openssl.so" \
         "$JNILIBS_DIR/libcrypto_openssl.so"
     copy_file "$ARKUI_BUILD/thirdparty/openssl/libssl_openssl.so" \
         "$JNILIBS_DIR/libssl_openssl.so"
 
-    # xml2: libdata_preferences.so 的依赖
     copy_file "$ARKUI_BUILD/thirdparty/libxml2/libxml2.so" \
         "$JNILIBS_DIR/libxml2.so"
 
-    # zlib: libcurl_shared.so 的压缩依赖
     copy_file "$ARKUI_BUILD/thirdparty/zlib/libshared_libz.so" \
         "$JNILIBS_DIR/libshared_libz.so"
 fi
